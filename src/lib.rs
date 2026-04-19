@@ -132,11 +132,50 @@ impl LabGuard {
         }
 
         // Gate 2: Falsifiable — no absolute words
-        let absolutes = ["always", "never", "all", "none", "every single", "impossible to fail"];
+        // Extended from ct-lab: JC1's lab rejected "DCS always improves fitness"
+        // because absolute quantifiers make claims unfalsifiable.
+        let absolutes = [
+            "always", "never", "all", "none", "every single",
+            "impossible to fail", "guaranteed", "proven", "unquestionably",
+            "without exception", "invariably", "universally",
+        ];
         let claim_lower = hyp.claim.to_lowercase();
-        let has_absolute = absolutes.iter().any(|a| claim_lower.contains(a));
+        // Check for whole-word matches only ("overall" should not trigger "all")
+        let has_absolute = absolutes.iter().any(|a| {
+            let pat = format!(" {} ", a); // surrounded by spaces
+            claim_lower.contains(&pat) ||
+            claim_lower.starts_with(&format!("{} ", a)) ||
+            claim_lower.ends_with(&format!(" {}", a)) ||
+            claim_lower.as_str() == *a
+        });
         if has_absolute {
-            gates.push(GateResult::Fail(format!("Contains absolute word: check for {:?}", absolutes)));
+            gates.push(GateResult::Fail(format!(
+                "Absolute quantifier detected — claims must be falsifiable under specific conditions. Check for: {:?}",
+                absolutes
+            )));
+        } else {
+            gates.push(GateResult::Pass);
+        }
+
+        // Gate 2b: Vague causation — claims about proportionality must specify the mechanism
+        // Extended from ct-lab: "DCS benefit is inversely proportional to perception range"
+        // was too vague — needs the mechanism of action.
+        let vague_patterns = [
+            "inversely proportional", "directly proportional",
+            "proportional to", "correlated with", "depends on",
+        ];
+        let has_vague = vague_patterns.iter().any(|p| claim_lower.contains(p));
+        // Allow if claim also has specific conditions (numbers, mechanisms)
+        let has_specifics = hyp.conditions.iter().any(|c| {
+            c.contains(|ch: char| ch.is_ascii_digit()) ||
+            c.contains("because") || c.contains("due to") || c.contains("via") ||
+            c.contains("mechanism") || c.contains("threshold")
+        });
+        if has_vague && !has_specifics {
+            gates.push(GateResult::Fail(
+                "Vague causation — claims about proportionality must specify the mechanism. \n
+                 Add conditions with numbers or causal explanation (because, due to, via, mechanism).".to_string()
+            ));
         } else {
             gates.push(GateResult::Pass);
         }
@@ -500,5 +539,76 @@ mod tests {
             .with_conditions(vec!["test".to_string()]));
 
         assert_eq!(guard.by_status(HypothesisStatus::Gated).len(), 2);
+    }
+
+    // --- ct-lab Extended Gate Tests ---
+
+    #[test]
+    fn test_gate_rejects_always() {
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("always-bad", "DCS always improves fitness", 0.3)
+            .with_conditions(vec!["agents=256".to_string()]);
+        let result = guard.submit(hyp);
+        assert!(matches!(result, GateResult::Fail(_)));
+    }
+
+    #[test]
+    fn test_gate_rejects_never() {
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("never-bad", "Trust decay never causes cascading failure", 0.2)
+            .with_conditions(vec!["test".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Fail(_)));
+    }
+
+    #[test]
+    fn test_gate_rejects_guaranteed() {
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("guaranteed-bad", "Ghost tiles are guaranteed to improve recall", 0.1)
+            .with_conditions(vec!["test".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Fail(_)));
+    }
+
+    #[test]
+    fn test_gate_allows_falsifiable() {
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("falsifiable", "DCS improves fitness when specialist ratio exceeds 5x", 0.3)
+            .with_conditions(vec!["agents=256, specialist_ratio=5.0".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Pass));
+    }
+
+    #[test]
+    fn test_gate_rejects_overall_not_absolute() {
+        // "overall" contains "all" but shouldn't trigger absolute gate
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("overall-ok", "Overall system performance improves with tiling", 0.3)
+            .with_conditions(vec!["test".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Pass));
+    }
+
+    #[test]
+    fn test_gate_rejects_vague_causation() {
+        // ct-lab rejected: "DCS benefit is inversely proportional to perception range"
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("vague", "DCS benefit is inversely proportional to perception range", 0.3)
+            .with_conditions(vec!["tested with simulation".to_string()]); // no mechanism, no numbers
+        assert!(matches!(guard.submit(hyp), GateResult::Fail(_)));
+    }
+
+    #[test]
+    fn test_gate_allows_specific_causation() {
+        // Same claim but with mechanism explanation
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("specific", "DCS benefit is inversely proportional to perception range", 0.3)
+            .with_conditions(vec!["because specialists exploit local gradients that generalists miss".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Pass));
+    }
+
+    #[test]
+    fn test_gate_allows_causation_with_numbers() {
+        // Numbers count as specifics
+        let mut guard = LabGuard::new();
+        let hyp = Hypothesis::new("with-nums", "Fitness is proportional to food density", 0.4)
+            .with_conditions(vec!["food_density > 0.5".to_string()]);
+        assert!(matches!(guard.submit(hyp), GateResult::Pass));
     }
 }
