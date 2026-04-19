@@ -1,0 +1,5 @@
+[package]
+name = "plato-lab-guard"
+version = "0.1.0"
+edition = "2021"
+description = "Unfakeable constraint lab — Achievement Loss scoring for hypothesis validation"
