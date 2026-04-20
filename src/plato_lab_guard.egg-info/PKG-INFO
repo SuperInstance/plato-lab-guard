@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: plato-lab-guard
+Version: 0.1.0
+Summary: Lab guard — hypothesis gating, absolute quantifier detection, claim validation
+License: MIT
+Requires-Python: >=3.8
